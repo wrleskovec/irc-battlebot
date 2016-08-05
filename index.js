@@ -1,30 +1,67 @@
 var irc = require('irc');
 var nlp = require('nlp_compromise');
 var _ = require('lodash');
-var Attack = require('./attack.js');
+var createAttack = require('./attack.js');
 var fs = require('fs');
 
-//Bot Settings
+// Bot Settings
 var channel = '##mencius';
+// Because Fuuuuuck you freenode
+var freenodeSTFU = /(#+)(\w+)/.exec(channel);
+var capitalizedChannel = freenodeSTFU[1] + _.capitalize(freenodeSTFU[2]);
 var botName = 'wp-battlebot';
-var server = 'irc.rizon.net';
-var statsFile = './'+ channel + '-statistics.json';
+var server = 'irc.freenode.net';
+var statsFile = './' + channel + '-statistics.json';
 var stats;
+var client = new irc.Client(server, botName, {
+  channels: [channel]
+});
 
 function openStats() {
   try {
-    stats = require(statsFile);
-  }
-  catch(e) {
-    console.log(e);
-    stats = {nicks: {}, attacks: {}};
+    stats = JSON.parse(fs.readFileSync(statsFile));
+  } catch (e) {
+    stats = {
+      nicks: {},
+      attacks: {}
+    };
   }
 }
 
+function isChannel(args) {
+  var i;
+  for (i = 0; i < args.length; i++) {
+    if (args[i] === channel || args[i] === capitalizedChannel) {
+      return true;
+    }
+  }
+  return false;
+}
 
-function saveStats(){
+function isPM(args) {
+  var i;
+  for (i = 0; i < args.length; i++) {
+    if (args[i] === botName) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function getActionArg(args) {
+  var i;
+  for (i = 0; i < args.length; i++) {
+    if (/ACTION/g.test(args[i])) {
+      return args[i];
+    }
+  }
+  return false;
+}
+
+function saveStats() {
   fs.writeFileSync(statsFile, JSON.stringify(stats));
 }
+
 function newPlayer() {
   return {
     hp: 100,
@@ -34,89 +71,94 @@ function newPlayer() {
     attackHistory: {}
   };
 }
-function getNewPlayers(client, stats) {
+
+function getNewPlayers() {
   var chanNicks = client.chans[channel].users;
-  _.forEach(chanNicks, function(val, key){
-    if(!_.has(stats.nicks, key)){
+  _.forEach(chanNicks, function (val, key) {
+    if (!_.has(stats.nicks, key)) {
       stats.nicks[key] = newPlayer();
     }
   });
 }
-function initAttack(attack) {
+
+function initAttack() {
   return {
-    damage : Math.floor(Math.random() * 50 + 10),
+    damage: Math.floor((Math.random() * 50) + 10),
     times: 1
   };
 }
-function rechargeMp(){
-  stats.nicks = _.mapValues(stats.nicks, function(nick){
-    if(nick.mp <= 90) nick.mp += 10;
+
+function rechargeMp() {
+  stats.nicks = _.mapValues(stats.nicks, function (nick) {
+    if (nick.mp <= 90) return nick.mp + 10;
     return nick;
   });
-  console.log('Mp recharged!');
 }
-function attackPlayer(client, message, words) {
+
+function attackPlayer(message, words) {
   var nick = message.nick;
+  var attack = nlp.verb(words[0]).conjugate().infinitive;
   var targetNick;
-  _.some(stats.nicks, function(val, key){
-    if(words.indexOf(key) > -1){
+  var newAttack;
+  _.some(stats.nicks, function (val, key) {
+    if (words.indexOf(key) > -1) {
       targetNick = key;
       return true;
     }
     return false;
   });
-  var attack = nlp.verb(words[0]).conjugate().infinitive;
+  targetNick = targetNick || nick;
 
-  if(!stats.attacks[attack]){
-    stats.attacks[attack] = initAttack(attack);
-  }
-  else {
+  if (!stats.attacks[attack]) {
+    stats.attacks[attack] = initAttack();
+  } else {
     stats.attacks[attack].times++;
   }
-  // addAttack(nick, attack);
-  // addAttack(nickTarget, attack);
-  // resolveAttack(nick, nickTarget, attack);
-  var newAttack = Attack(attack, nick, targetNick, stats);
+  newAttack = createAttack(attack, nick, targetNick, stats);
   client.say(channel, newAttack.attackPlayer());
   saveStats();
 }
 
-function initBot(server, botName, channel) {
-  openStats();
-  var client = new irc.Client(server, botName, {
-    channels: [channel]
-  });
-
-  client.once('join', function(){
-    console.log('joined the channel');
-    setInterval(rechargeMp, 30000);
-    client.addListener('raw', function(message) {
-      //need to do the same for nick changes and joins
-      if (message.command === 'rpl_namreply'){
-        console.log('USEFUL!!!!!!');
-        getNewPlayers(client, stats);
-        console.log(util.inspect(stats, false, null));
+function chatHandler(message) {
+  var actionMessage;
+  var text;
+  var words;
+  switch (message.command) {
+    case 'rpl_namreply':
+      getNewPlayers();
+      break;
+    case 'NICK':
+      if (!stats.nicks[message.args[0]]) {
+        stats.nicks[message.args[0]] = newPlayer();
       }
-      else if (message.command === 'NICK') {
-        if (!stats.nicks[message.args[0]]) {
-          stats.nicks[message.args[0]] = newPlayer();
-        }
+      break;
+    case 'JOIN':
+      if (!stats.nicks[message.nick]) {
+        stats.nicks[message.nick] = newPlayer();
       }
-      else if (message.command === 'JOIN') {
-        if (!stats.nicks[message.nick]) {
-          stats.nicks[message.nick] = newPlayer();
-        }
+      break;
+    case 'PRIVMSG':
+      actionMessage = getActionArg(message.args);
+      if (isChannel(message.args) && actionMessage) {
+        text = /.ACTION ([\w\s-]+)./.exec(actionMessage)[1];
+        words = text.split(' ');
+        attackPlayer(message, words);
+      } else if (isPM(message.args)) {
+        client.say(message.nick, JSON.stringify(stats.nicks[message.nick]));
       }
-      //console.log(message);
-      if (message.args[0] === channel && message.args[1] && /ACTION/g.test(message.args[1])) {
-        var text = /.ACTION ([\w\s-]+)./.exec(message.args[1])[1];
-        var words = text.split(" ");
-        attackPlayer(client, message, words);
-        console.log(stats);
-      }
-    });
-  });
-
+      break;
+    default:
+      break;
+  }
 }
 
+function initBot() {
+  client.once('join', function () {
+    console.log('Joined!');
+    setInterval(rechargeMp, 30000);
+    client.addListener('raw', chatHandler);
+  });
+}
+
+openStats();
 initBot(server, botName, channel);

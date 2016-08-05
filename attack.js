@@ -1,121 +1,127 @@
 var nlp = require('nlp_compromise');
+var _ = require('lodash');
 
-function Attack(attackName, player, target, stats) {
+
+function Attack(attackName, nick, targetNick, stats) {
   function initMessage() {
     var pastTense = nlp.verb(attackName).conjugate().past;
-    return player + " " + pastTense + " " + target;
+    return nick + ' ' + pastTense + ' ' + targetNick;
   }
   this.attackName = attackName;
-  this.attack = stats.attacks[attackName]
+  this.attack = stats.attacks[attackName];
   this.attacks = stats.attacks;
-  this.nick = stats.nicks[player];
-  this.targetNick = stats.nicks[target];
+  this.nick = stats.nicks[nick];
+  this.targetNick = stats.nicks[targetNick];
   this.multiplier = 1;
   this.response = initMessage();
 }
 
-Attack.prototype.addAttack = function(nickname) {
+Attack.prototype.addAttack = function (nickname) {
   var attackHistory = nickname.attackHistory;
   if (attackHistory[this.attackName]) attackHistory[this.attackName]++;
   else {
     attackHistory[this.attackName] = 1;
   }
-}
+};
 
-Attack.prototype.ratioAttacksPlayer = function(attackHistory) {
+Attack.prototype.ratioAttacksPlayer = function (attackHistory) {
+  var attacks = _.keys(attackHistory);
+  var items = attacks.length;
+  var i;
   var total = 0;
-  var items = 0;
-  for (var prop in attackHistory) {
-    total += attackHistory[prop];
-    items += 1;
+  for (i = 0; i < items; i++) {
+    total += attackHistory[i];
   }
-  return 1 + attackHistory[this.attackName] / (total / items);
-}
+  return 1 + (attackHistory[this.attackName] / (total / items));
+};
 
-Attack.prototype.calculateAttackResistance = function() {
-
+Attack.prototype.calculateAttackResistance = function () {
   var playerRatio = this.ratioAttacksPlayer(this.nick.attackHistory);
   var targetRatio = this.ratioAttacksPlayer(this.targetNick.attackHistory);
-  // var total = 0;
-  // var items = 0;
-  // for (var prop in this.attacks) {
-  //   total += this.attacks[prop].times;
-  //   items += 1;
-  // }
-  // var totalRatio = 1 + this.attack.times / (total / items);
-  return (playerRatio / targetRatio );
-}
-Attack.prototype.lvlUp = function(player) {
+  return (playerRatio / targetRatio);
+};
+
+Attack.prototype.lvlUp = function (player) {
   this.refreshHp(player);
   player.xp -= 100;
   player.lvl += 1;
   this.response += ' Gained a lvl.';
-}
-Attack.prototype.refreshHp = function(player) {
+};
+
+Attack.prototype.refreshHp = function (player) {
   player.hp = 100;
   player.mp = 100;
-}
+};
 
-Attack.prototype.resolveDamageDealt = function() {
-  var baseDamage = this.attack.damage + Math.random() * 5;
+Attack.prototype.resolveDamageDealt = function () {
+  var baseDamage = this.attack.damage + (Math.random() * 5);
   var damage = Math.floor(baseDamage * this.multiplier);
   var xp = 10;
   this.targetNick.hp = this.targetNick.hp -= damage;
   this.response += (' Deals ' + damage + ' damage.');
-  if(this.targetNick.hp < 1) {
-    xp += Math.floor(this.targetNick.lvl / this.nick.lvl * 100);
+  if (this.targetNick.hp < 1) {
+    xp += Math.floor(this.targetNick.lvl / (this.nick.lvl * 100));
     this.refreshHp(this.targetNick);
     this.response += ' KO!';
   }
   this.nick.xp += xp;
-  if(this.nick.xp >= 100) {
+  if (this.nick.xp >= 100) {
     this.lvlUp(this.nick);
   }
-  if(this.targetNick.xp >= 100) {
+  if (this.targetNick.xp >= 100) {
     this.lvlUp(this.targetNick);
   }
+};
 
-}
-Attack.prototype.resolveMp = function() {
-  this.nick.mp = this.nick.mp -= this.attack.damage;
-  (this.nick.mp >= 0) ? this.nick.mp = this.nick.mp : this.nick.mp = 0;
-}
-Attack.prototype.resolveAttack = function() {
-  var Miss = (Math.random() * 100) > this.nick.mp;
-  this.resolveMp();
-  if(Miss){
-    this.response += ', but missed.';
+Attack.prototype.resolveMp = function () {
+  var newMp = this.mp - this.attack.damage;
+  if (newMp > 0) this.mp = newMp;
+  else {
+    this.mp = 0;
+  }
+};
+
+Attack.prototype.resolveAttackEffects = function () {
+  var critical;
+  var resistance;
+  var lvlRatio;
+  critical = Math.random() > 0.8;
+  resistance = this.calculateAttackResistance();
+  lvlRatio = this.nick.lvl / this.targetNick.lvl;
+  if (resistance > 1.1) {
+    this.response += ' and it\'s super effective!';
+    this.multiplier = 2;
+  } else if (resistance < 0.9) {
+    this.response += ', but it\'s not very effective.';
+    this.multiplier = 0.5;
   } else {
-    var critical = .8 < Math.random();
-    var resistance = this.calculateAttackResistance();
-    var lvlRatio = this.nick.lvl / this.targetNick.lvl;
-    if (resistance > 1.1) {
-      this.response += ' and it\'s super effective!';
-      this.multiplier = 2;
-    }
-    else if (resistance < .9) {
-      this.response += ', but it\'s not very effective.';
-      this.multiplier = .5;
-    }
-    else {
-      this.response += '.';
-    }
-    if (critical){
-      this.multiplier *= 2;
-      this.response += ' Critical hit!';
-    }
-    this.multiplier *= lvlRatio;
-    this.resolveDamageDealt();
+    this.response += '.';
   }
 
-}
-Attack.prototype.attackPlayer = function() {
+  if (critical) {
+    this.multiplier *= 2;
+    this.response += ' Critical hit!';
+  }
+  this.multiplier *= lvlRatio;
+};
+
+Attack.prototype.resolveAttack = function () {
+  var Miss = (Math.random() * 100) > this.nick.mp;
+  this.resolveMp();
+  if (Miss) {
+    this.response += ', but missed.';
+  } else {
+    this.resolveAttackEffects();
+    this.resolveDamageDealt();
+  }
+};
+Attack.prototype.attackPlayer = function () {
   this.addAttack(this.nick);
   this.addAttack(this.targetNick);
   this.resolveAttack();
   return this.response;
-}
+};
 
-module.exports = function(attackName, player, target, stats) {
-  return new Attack(attackName, player, target, stats);
+module.exports = function (attackName, nick, targetNick, stats) {
+  return new Attack(attackName, nick, targetNick, stats);
 };
