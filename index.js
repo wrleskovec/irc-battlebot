@@ -6,11 +6,10 @@ var fs = require('fs');
 
 // Bot Settings
 var channel = '##mencius';
-// Because Fuuuuuck you freenode
-var freenodeSTFU = /(#+)(\w+)/.exec(channel);
-var capitalizedChannel = freenodeSTFU[1] + _.capitalize(freenodeSTFU[2]);
+// Because freenode is a little bitch and randomly capitalizes channels in messages
+var chanRegex = new RegExp(channel, 'i');
 var botName = 'wp-battlebot';
-var server = 'irc.freenode.net';
+var server = 'freenode.net';
 var statsFile = './' + channel + '-statistics.json';
 var stats;
 var client = new irc.Client(server, botName, {
@@ -31,7 +30,7 @@ function openStats() {
 function isChannel(args) {
   var i;
   for (i = 0; i < args.length; i++) {
-    if (args[i] === channel || args[i] === capitalizedChannel) {
+    if (chanRegex.test(args[i])) {
       return true;
     }
   }
